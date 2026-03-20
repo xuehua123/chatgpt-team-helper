@@ -5,7 +5,7 @@ import { authenticateToken } from '../middleware/auth.js'
 import { apiKeyAuth } from '../middleware/api-key-auth.js'
 import { requireMenu } from '../middleware/rbac.js'
 import { syncAccountUserCount, syncAccountInviteCount, fetchOpenAiAccountInfo, fetchAccountUsersList, AccountSyncError, deleteAccountUser, inviteAccountUser, deleteAccountInvite } from '../services/account-sync.js'
-import { notifyAccountQuarantined } from '../services/account-status-webhook.js'
+import { notifyAccountActivated, notifyAccountQuarantined } from '../services/account-status-webhook.js'
 
 const router = express.Router()
 const OPENAI_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann'
@@ -903,12 +903,16 @@ router.put('/:id', async (req, res) => {
     const db = await getDatabase()
 
     // Check if account exists
-    const checkResult = db.exec('SELECT id, email FROM gpt_accounts WHERE id = ?', [req.params.id])
+    const checkResult = db.exec(
+      'SELECT id, email, COALESCE(is_banned, 0) AS is_banned FROM gpt_accounts WHERE id = ?',
+      [req.params.id]
+    )
     if (checkResult.length === 0 || checkResult[0].values.length === 0) {
       return res.status(404).json({ error: 'Account not found' })
     }
 
     const existingEmail = checkResult[0].values[0][1]
+    const existingIsBanned = Number(checkResult[0].values[0][2] || 0) === 1
 
     db.run(
       `UPDATE gpt_accounts
@@ -979,6 +983,30 @@ router.put('/:id', async (req, res) => {
 		      createdAt: row[12],
 		      updatedAt: row[13]
 		    }
+
+    if (shouldUpdateIsBanned && existingIsBanned !== account.isBanned) {
+      if (account.isBanned) {
+        await notifyAccountQuarantined({
+          account,
+          reason: 'manual_update_ban',
+          source: 'chatgpt-team-helper.manual.update',
+          payload: {
+            actor: 'admin_route',
+            route: 'PUT /api/gpt-accounts/:id'
+          }
+        })
+      } else {
+        await notifyAccountActivated({
+          account,
+          reason: 'manual_restore',
+          source: 'chatgpt-team-helper.manual.restore',
+          payload: {
+            actor: 'admin_route',
+            route: 'PUT /api/gpt-accounts/:id'
+          }
+        })
+      }
+    }
 
     res.json(account)
   } catch (error) {

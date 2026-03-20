@@ -34,10 +34,11 @@ const buildAccountMetadata = (account) => ({
   sourceSystem: 'chatgpt-team-helper'
 })
 
-export async function notifyAccountQuarantined({
+async function postAccountStatusChanged({
   account,
+  status,
   reason,
-  source = 'chatgpt-team-helper.manual',
+  source,
   payload = {}
 } = {}) {
   const config = getWebhookConfig()
@@ -63,8 +64,8 @@ export async function notifyAccountQuarantined({
       owner_system: 'chatgpt-team-helper',
       metadata: buildAccountMetadata(account)
     },
-    status: 'quarantined',
-    reason: trimString(reason) || 'account_marked_quarantined',
+    status,
+    reason: trimString(reason) || `account_marked_${status}`,
     version: Date.now(),
     payload: {
       trigger: source,
@@ -89,8 +90,9 @@ export async function notifyAccountQuarantined({
       timeout: config.timeoutMs
     })
 
-    console.log('[AccountStatusWebhook] delivered quarantine event', {
+    console.log('[AccountStatusWebhook] delivered account status event', {
       accountId,
+      eventStatus: status,
       url,
       status: response.status
     })
@@ -110,6 +112,7 @@ export async function notifyAccountQuarantined({
 
     console.warn('[AccountStatusWebhook] delivery failed', {
       accountId,
+      eventStatus: status,
       url,
       statusCode,
       message
@@ -122,4 +125,34 @@ export async function notifyAccountQuarantined({
       message
     }
   }
+}
+
+export async function notifyAccountQuarantined({
+  account,
+  reason,
+  source = 'chatgpt-team-helper.manual.ban',
+  payload = {}
+} = {}) {
+  return postAccountStatusChanged({
+    account,
+    status: 'quarantined',
+    reason,
+    source,
+    payload
+  })
+}
+
+export async function notifyAccountActivated({
+  account,
+  reason,
+  source = 'chatgpt-team-helper.manual.restore',
+  payload = {}
+} = {}) {
+  return postAccountStatusChanged({
+    account,
+    status: 'active',
+    reason,
+    source,
+    payload
+  })
 }
