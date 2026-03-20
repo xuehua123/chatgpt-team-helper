@@ -87,6 +87,41 @@ const collectEmails = (payload) => {
   return []
 }
 
+const mapAccountRow = (row) => ({
+  id: row[0],
+  email: row[1],
+  token: row[2],
+  refreshToken: row[3],
+  userCount: row[4],
+  inviteCount: row[5],
+  chatgptAccountId: row[6],
+  oaiDeviceId: row[7],
+  expireAt: row[8] || null,
+  isOpen: Boolean(row[9]),
+  isDemoted: false,
+  isBanned: Boolean(row[10]),
+  remark: row[11] || null,
+  createdAt: row[12],
+  updatedAt: row[13]
+})
+
+const fetchAccountById = async (db, accountId) => {
+  const result = db.exec(`
+      SELECT id, email, token, refresh_token, user_count, invite_count, chatgpt_account_id, oai_device_id, expire_at, is_open,
+             COALESCE(is_banned, 0) AS is_banned,
+             remark,
+             created_at, updated_at
+      FROM gpt_accounts
+      WHERE id = ?
+    `, [accountId])
+
+  if (result.length === 0 || result[0].values.length === 0) {
+    return null
+  }
+
+  return mapAccountRow(result[0].values[0])
+}
+
 const CHECK_STATUS_ALLOWED_RANGE_DAYS = new Set([7, 15, 30])
 const MAX_CHECK_ACCOUNTS = 300
 const CHECK_STATUS_CONCURRENCY = 3
@@ -422,6 +457,80 @@ router.post('/ban', apiKeyAuth, async (req, res) => {
     })
   } catch (error) {
     console.error('Ban GPT accounts by email error:', error)
+    return res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+router.get('/internal/:id/check-context', apiKeyAuth, async (req, res) => {
+  try {
+    const accountId = Number(req.params.id)
+    if (!Number.isFinite(accountId)) {
+      return res.status(400).json({ error: 'Invalid account id' })
+    }
+
+    const db = await getDatabase()
+    const account = await fetchAccountById(db, accountId)
+    if (!account) {
+      return res.status(404).json({ error: 'Account not found' })
+    }
+
+    return res.json({
+      account,
+      checkContext: {
+        accountId: account.id,
+        email: account.email,
+        token: account.token,
+        refreshToken: account.refreshToken,
+        chatgptAccountId: account.chatgptAccountId,
+        oaiDeviceId: account.oaiDeviceId,
+        expireAt: account.expireAt,
+        isOpen: account.isOpen,
+        isBanned: account.isBanned
+      }
+    })
+  } catch (error) {
+    console.error('Get GPT account check context error:', error)
+    return res.status(500).json({ error: 'Internal server error' })
+  }
+})
+
+router.patch('/internal/:id/tokens', apiKeyAuth, async (req, res) => {
+  try {
+    const accountId = Number(req.params.id)
+    const accessToken = String(req.body?.accessToken || '').trim()
+    const refreshTokenRaw = req.body?.refreshToken
+
+    if (!Number.isFinite(accountId)) {
+      return res.status(400).json({ error: 'Invalid account id' })
+    }
+    if (!accessToken) {
+      return res.status(400).json({ error: 'accessToken is required' })
+    }
+
+    const db = await getDatabase()
+    const existing = await fetchAccountById(db, accountId)
+    if (!existing) {
+      return res.status(404).json({ error: 'Account not found' })
+    }
+
+    db.run(
+      `UPDATE gpt_accounts
+       SET token = ?,
+           refresh_token = ?,
+           updated_at = DATETIME('now', 'localtime')
+       WHERE id = ?`,
+      [
+        accessToken,
+        refreshTokenRaw == null ? existing.refreshToken || null : (String(refreshTokenRaw).trim() || null),
+        accountId
+      ]
+    )
+    await saveDatabase()
+
+    const account = await fetchAccountById(db, accountId)
+    return res.json({ account })
+  } catch (error) {
+    console.error('Update GPT account tokens error:', error)
     return res.status(500).json({ error: 'Internal server error' })
   }
 })
