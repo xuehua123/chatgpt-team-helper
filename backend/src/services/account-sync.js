@@ -1,6 +1,7 @@
 import { getDatabase, saveDatabase } from '../database/init.js'
 import axios from 'axios'
 import { loadProxyList, parseProxyConfig, pickProxyByHash } from '../utils/proxy.js'
+import { notifyAccountQuarantined } from './account-status-webhook.js'
 
 export class AccountSyncError extends Error {
   constructor(message, status = 500) {
@@ -385,6 +386,20 @@ const throwChatgptApiStatusError = async ({ status, errorText, logContext, label
             )
             await saveDatabase()
             console.warn('[AccountSync] upstream account_deactivated; auto-banned', { accountId })
+            await notifyAccountQuarantined({
+              account: {
+                ...account,
+                id: accountId,
+                isOpen: false,
+                isBanned: true
+              },
+              reason: 'upstream_account_deactivated',
+              source: 'chatgpt-team-helper.upstream.account_deactivated',
+              payload: {
+                upstream_status: status,
+                upstream_code: code || null
+              }
+            })
           } catch (error) {
             console.error('[AccountSync] auto-ban failed', {
               accountId,

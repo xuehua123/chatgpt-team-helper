@@ -5,6 +5,7 @@ import { authenticateToken } from '../middleware/auth.js'
 import { apiKeyAuth } from '../middleware/api-key-auth.js'
 import { requireMenu } from '../middleware/rbac.js'
 import { syncAccountUserCount, syncAccountInviteCount, fetchOpenAiAccountInfo, fetchAccountUsersList, AccountSyncError, deleteAccountUser, inviteAccountUser, deleteAccountInvite } from '../services/account-sync.js'
+import { notifyAccountQuarantined } from '../services/account-status-webhook.js'
 
 const router = express.Router()
 const OPENAI_CLIENT_ID = 'app_EMoamEEZ73f0CkXaXp7hrann'
@@ -1105,6 +1106,16 @@ router.patch('/:id/ban', async (req, res) => {
       createdAt: row[12],
       updatedAt: row[13]
     }
+
+    await notifyAccountQuarantined({
+      account,
+      reason: 'manual_ban',
+      source: 'chatgpt-team-helper.manual.ban',
+      payload: {
+        actor: 'admin_route',
+        route: 'PATCH /api/gpt-accounts/:id/ban'
+      }
+    })
 
     res.json(account)
   } catch (error) {
